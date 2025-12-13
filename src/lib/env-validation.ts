@@ -67,6 +67,34 @@ export function validatePaymentEnvironment(): EnvValidationResult {
     errors.push('NEXT_PUBLIC_SUPABASE_URL must be a valid HTTPS URL');
   }
 
+  // AI Gateway validation
+  const gatewayStrategy = process.env.AI_GATEWAY_STRATEGY?.toLowerCase();
+  if (gatewayStrategy === 'gateway-only' && !process.env.AI_GATEWAY_API_KEY) {
+    errors.push('AI_GATEWAY_API_KEY is required when AI_GATEWAY_STRATEGY=gateway-only');
+  }
+
+  if (gatewayStrategy === 'primary' && !process.env.AI_GATEWAY_API_KEY) {
+    warnings.push('AI_GATEWAY_API_KEY recommended when AI_GATEWAY_STRATEGY=primary (will use direct API as fallback)');
+  }
+
+  // Validate provider order
+  const providerOrder = process.env.AI_GATEWAY_PROVIDER_ORDER?.split(',') || [];
+  const invalidProviders = providerOrder.filter(p =>
+    !['anthropic', 'openai', 'vertex', ''].includes(p.trim().toLowerCase())
+  );
+  if (invalidProviders.length > 0) {
+    warnings.push(`AI_GATEWAY_PROVIDER_ORDER contains invalid providers: ${invalidProviders.join(', ')}`);
+  }
+
+  // Validate model fallbacks format
+  const modelFallbacks = process.env.AI_GATEWAY_MODEL_FALLBACKS?.split(',') || [];
+  const invalidFallbacks = modelFallbacks.filter(m =>
+    m.trim() !== '' && !m.includes('/')
+  );
+  if (invalidFallbacks.length > 0) {
+    warnings.push(`AI_GATEWAY_MODEL_FALLBACKS should be in format "provider/model": ${invalidFallbacks.join(', ')}`);
+  }
+
   return {
     valid: errors.length === 0,
     errors,

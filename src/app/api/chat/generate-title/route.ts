@@ -1,7 +1,7 @@
 import { generateText } from 'ai';
 import { openai } from '@ai-sdk/openai';
 import { anthropic } from '@ai-sdk/anthropic';
-import { getModelConfig } from '@/lib/model-config';
+import { getModelConfig, selectModel, getProviderOptions } from '@/lib/model-config';
 
 export async function POST(req: Request) {
   let requestBody: { message: string } | null = null;
@@ -28,20 +28,27 @@ export async function POST(req: Request) {
     // Get model configuration
     const modelConfig = getModelConfig();
 
+    // Select model using intelligent routing
+    const titleSelection = selectModel(modelConfig.titleModel, {
+      feature: 'title-generation',
+      isDevelopment: process.env.NEXT_PUBLIC_APP_MODE === 'development',
+    });
+
     // Generate title using AI
     const { text } = await generateText({
-      model: modelConfig.hasApiKey
-        ? (modelConfig.provider === "anthropic"
-            ? anthropic(modelConfig.titleModel)
-            : openai(modelConfig.titleModel))
-        : `${modelConfig.provider}/${modelConfig.titleModel}`,
+      model: titleSelection.model,
       prompt: `Generate a concise title (max 50 characters) for a biomedical research chat conversation that starts with this message.
       The title should capture the main topic or question.
       If it's about a specific drug, disease, or clinical trial, include it.
       Return ONLY the title, no quotes, no explanation.
 
       User message: "${message}"`,
-      temperature: 0.3
+      temperature: 0.3,
+      providerOptions: getProviderOptions(modelConfig.provider, {
+        feature: 'title-generation',
+        usesGateway: titleSelection.usesGateway,
+        tags: titleSelection.tags,
+      }),
     });
 
     const title = text.trim().substring(0, 50);

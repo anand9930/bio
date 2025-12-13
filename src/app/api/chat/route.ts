@@ -3,7 +3,7 @@ import { healthcareTools } from "@/lib/tools";
 import { BiomedUIMessage } from "@/lib/types";
 import { openai, createOpenAI } from "@ai-sdk/openai";
 import { anthropic } from "@ai-sdk/anthropic";
-import { getModelProvider, getModelConfig, getProviderOptions, getModelInfoString } from '@/lib/model-config';
+import { getModelProvider, getModelConfig, getProviderOptions, selectModel, ModelSelectionContext } from '@/lib/model-config';
 import { checkAnonymousRateLimit, incrementRateLimit } from "@/lib/rate-limit";
 import { createClient } from '@supabase/supabase-js';
 import { checkUserRateLimit } from '@/lib/rate-limit';
@@ -12,6 +12,7 @@ import { getPolarTrackedModel } from '@/lib/polar-llm-strategy';
 import * as db from '@/lib/db';
 import { isDevelopmentMode } from '@/lib/local-db/local-auth';
 import { saveChatMessages } from '@/lib/db';
+import { fa } from "zod/v4/locales";
 
 // 13mins max streaming (vercel limit)
 export const maxDuration = 800;
@@ -149,73 +150,38 @@ export async function POST(req: Request) {
     const modelConfig = getModelConfig();
     const provider = modelConfig.provider;
 
-    let selectedModel: any;
-    let modelInfo: string;
-
-    if (isDevelopment) {
-      // Development mode
-      if (modelConfig.hasApiKey) {
-        selectedModel = provider === "anthropic"
-          ? anthropic(modelConfig.primaryModel)
-          : openai(modelConfig.primaryModel);
-        modelInfo = getModelInfoString(modelConfig.primaryModel, provider, "development");
-      } else {
-        // Fallback to Vercel AI Gateway
-        const gatewayModel = `${provider}/${modelConfig.primaryModel}`;
-        selectedModel = gatewayModel;
-        modelInfo = `Vercel AI Gateway (${provider}/${modelConfig.primaryModel}) - Development Mode`;
-      }
-    } else {
-      // Production mode
-      if (user) {
-        // Get user subscription tier to determine billing approach
-        const { data: userData } = await db.getUserProfile(user.id);
-
-        const userTier = userData?.subscription_tier || userData?.subscriptionTier || 'free';
-        const isActive = (userData?.subscription_status || userData?.subscriptionStatus) === 'active';
-
-        // Only use Polar LLM Strategy for pay-per-use users
-        if (isActive && userTier === 'pay_per_use') {
-          selectedModel = getPolarTrackedModel(user.id, modelConfig.primaryModel);
-          modelInfo = getModelInfoString(modelConfig.primaryModel, provider, "polar-tracked");
-        } else {
-          // Unlimited users and free users use regular model (no per-token billing)
-          if (modelConfig.hasApiKey) {
-            selectedModel = provider === "anthropic"
-              ? anthropic(modelConfig.primaryModel)
-              : openai(modelConfig.primaryModel);
-            modelInfo = getModelInfoString(modelConfig.primaryModel, provider, "production", userTier);
-          } else {
-            const gatewayModel = `${provider}/${modelConfig.primaryModel}`;
-            selectedModel = gatewayModel;
-            modelInfo = `Vercel AI Gateway (${provider}/${modelConfig.primaryModel}) - Production Mode (${userTier} tier - Flat Rate)`;
-          }
-        }
-      } else {
-        // Anonymous users
-        if (modelConfig.hasApiKey) {
-          selectedModel = provider === "anthropic"
-            ? anthropic(modelConfig.primaryModel)
-            : openai(modelConfig.primaryModel);
-          modelInfo = getModelInfoString(modelConfig.primaryModel, provider, "production");
-        } else {
-          selectedModel = `${provider}/${modelConfig.primaryModel}`;
-          modelInfo = `Vercel AI Gateway (${provider}/${modelConfig.primaryModel}) - Production Mode (Anonymous)`;
-        }
-      }
-    }
-
-    console.log("[Chat API] Model selected:", modelInfo);
-
-    // No need for usage tracker - Polar LLM Strategy handles everything automatically
-
-    // User tier is already determined above in model selection
-    let userTier = 'free';
+    // Determine user tier for model selection
+    let userTier: 'free' | 'pay_per_use' | 'unlimited' = 'free';
     if (user) {
       const { data: userData } = await db.getUserProfile(user.id);
-      userTier = userData?.subscription_tier || userData?.subscriptionTier || 'free';
+      userTier = (userData?.subscription_tier || userData?.subscriptionTier || 'free') as 'free' | 'pay_per_use' | 'unlimited';
       console.log("[Chat API] User tier:", userTier);
     }
+
+    // Build context for intelligent model selection
+    const modelContext: ModelSelectionContext = {
+      userId: user?.id,
+      userTier,
+      feature: 'chat',
+      isDevelopment,
+    };
+
+    // Select model using intelligent routing
+    const primarySelection = selectModel(modelConfig.primaryModel, modelContext);
+
+    console.log("[Chat API] Model selected:", primarySelection.description);
+
+    const selectedModel = primarySelection.model;
+    const modelInfo = primarySelection.description;
+
+    // Get provider options with gateway config if applicable
+    const providerOptions = getProviderOptions(provider, {
+      userId: user?.id,
+      userTier,
+      feature: 'chat',
+      usesGateway: primarySelection.usesGateway,
+      tags: primarySelection.tags,
+    });
 
     // Track processing start time
     const processingStartTime = Date.now();
@@ -226,9 +192,6 @@ export async function POST(req: Request) {
 
     console.log(`[Chat API] About to call streamText with model:`, selectedModel);
     console.log(`[Chat API] Model info:`, modelInfo);
-
-    // Get provider-specific options based on configured provider
-    const providerOptions = getProviderOptions(provider);
 
     // Save user message immediately (before streaming starts)
     if (user && sessionId && messages.length > 0) {
@@ -260,19 +223,8 @@ export async function POST(req: Request) {
       }
     }
 
-    const result = streamText({
-      model: selectedModel as any,
-      messages: convertToModelMessages(messages),
-      tools: healthcareTools,
-      toolChoice: "auto",
-      experimental_context: {
-        userId: user?.id,
-        userTier,
-        sessionId,
-      },
-      providerOptions,
-      // DON'T pass abortSignal - we want the stream to continue even if user switches tabs
-      system: `You are a helpful biomedical research assistant with access to comprehensive tools for Python code execution, biomedical data, clinical trials, drug information, scientific literature, web search, and data visualization.
+    // Extract system prompt to constant for caching
+    const SYSTEM_PROMPT = `You are a helpful biomedical research assistant with access to comprehensive tools for Python code execution, biomedical data, clinical trials, drug information, scientific literature, web search, and data visualization.
 
       CRITICAL CITATION INSTRUCTIONS:
       When you use ANY search tool (clinical trials, drug information, biomedical literature, or web search) and reference information from the results in your response:
@@ -296,7 +248,7 @@ export async function POST(req: Request) {
 
       Example of WRONG citation usage (DO NOT DO THIS):
       "[1] Pembrolizumab demonstrated an ORR of 45% [1]. [2] The median PFS reached 10.3 months [2]."
-      
+
       You can:
 
          - Execute Python code for pharmacokinetic modeling, statistical analysis, data visualization, and complex calculations using the codeExecution tool (runs in a secure Daytona Sandbox)
@@ -341,14 +293,14 @@ export async function POST(req: Request) {
       • Clinical study results and meta-analyses
       • Mechanism of action studies
       • Preclinical and translational research
-      
+
                For web searches, you can find information on:
          • Current events and news from any topic
          • Research topics with high relevance scoring
          • Educational content and explanations
          • Technology trends and developments
          • General knowledge across all domains
-         
+
          For data visualization, you can create charts when users want to:
          • Compare multiple drugs, treatments, or clinical outcomes (line/bar charts)
          • Visualize trends over time (line/area charts for survival curves, drug concentrations)
@@ -378,7 +330,7 @@ export async function POST(req: Request) {
              ]
            }
          ]
-         
+
          Each data point requires an x field (date/label) and y field (numeric value). Do NOT use other formats like "datasets" or "labels" - only use the dataSeries format shown above.
 
          CRITICAL CHART EMBEDDING REQUIREMENTS:
@@ -408,13 +360,13 @@ export async function POST(req: Request) {
 
                Always use the appropriate tools when users ask for calculations, Python code execution, biomedical data, web queries, or data visualization.
          Choose the codeExecution tool for any mathematical calculations, pharmacokinetic modeling, statistical analysis, data computations, or when users need to run Python code.
-         
+
          CRITICAL: WHEN TO USE codeExecution TOOL:
          - ALWAYS use codeExecution when the user asks you to "calculate", "compute", "use Python", or "show Python code"
          - NEVER just display Python code as text - you MUST execute it using the codeExecution tool
          - If the user asks for calculations with Python, USE THE TOOL, don't just show code
          - Mathematical formulas should be explained with LaTeX, but calculations MUST use codeExecution
-         
+
          CRITICAL PYTHON CODE REQUIREMENTS:
          1. ALWAYS include print() statements - Python code without print() produces no visible output
          2. Use descriptive labels and proper formatting in your print statements
@@ -424,10 +376,10 @@ export async function POST(req: Request) {
          6. Always calculate intermediate values before printing final results
           7. Available libraries: You may install and use packages in the Daytona sandbox (e.g., numpy, pandas, scikit-learn). Prefer the chart creation tool for visuals unless an advanced/custom visualization is required.
           8. Visualization guidance: Prefer the chart creation tool for most charts. Use Daytona-rendered plots only for complex, bespoke visualizations that the chart tool cannot represent.
-         
+
           REQUIRED: Every Python script must end with print() statements that show the calculated results with proper labels, units, and formatting. Never just write variable names or expressions without print() - they will not display anything to the user.
           If generating advanced charts with Daytona (e.g., matplotlib), ensure the code renders the figure (e.g., plt.show()) so artifacts can be captured.
-         
+
          ERROR RECOVERY: If any tool call fails due to validation errors, you will receive an error message explaining what went wrong. When this happens:
          1. Read the error message carefully to understand what fields are missing or incorrect
          2. Correct the tool call by providing ALL required fields with proper values
@@ -435,7 +387,7 @@ export async function POST(req: Request) {
          4. For codeExecution tool errors, ensure your code includes proper print() statements
          5. Try the corrected tool call immediately - don't ask the user for clarification
          6. If multiple fields are missing, fix ALL of them in your retry attempt
-         
+
                   When explaining mathematical concepts, formulas, or pharmacokinetic calculations, ALWAYS use LaTeX notation for clear mathematical expressions:
 
          CRITICAL: ALWAYS wrap ALL mathematical expressions in <math>...</math> tags:
@@ -476,12 +428,12 @@ export async function POST(req: Request) {
       - When users say "calculate", "compute", or mention Python code, this is a COMMAND to use the codeExecution tool, not a request to see code
       - NEVER suggest using Python to fetch data from the internet or APIs. All data retrieval must be done via the clinicalTrialsSearch, drugInformationSearch, biomedicalLiteratureSearch, or webSearch tools.
       - Remember: The Python environment runs in the cloud with NumPy, pandas, and scikit-learn available, but NO visualization libraries.
-      
+
       CRITICAL WORKFLOW ORDER:
       1. First: Complete ALL data gathering (searches, calculations, etc.)
       2. Then: Create ALL charts/visualizations based on the gathered data
       3. Finally: Present your final formatted response with analysis
-      
+
       This ensures charts appear immediately before your analysis and are not lost among tool calls.
       ---
 
@@ -554,7 +506,41 @@ export async function POST(req: Request) {
            • Drug efficacy and safety data
            • Any factual claims from search results
       ---
-      `,
+      `;
+
+    // Enable prompt caching for Anthropic provider in production
+    const shouldEnableCaching = modelConfig.enablePromptCaching && provider === 'anthropic' && !isDevelopment;
+
+    const systemMessage: BiomedUIMessage = {
+      id: 'system-prompt',
+      role: 'system',
+      parts: [
+        {
+          type: 'text',
+          text: SYSTEM_PROMPT,
+          ...(shouldEnableCaching && {
+            providerMetadata: {
+              anthropic: {
+                cacheControl: { type: 'ephemeral' }
+              }
+            }
+          })
+        }
+      ]
+    };
+
+    const result = streamText({
+      model: selectedModel as any,
+      messages: convertToModelMessages([systemMessage, ...messages]),
+      tools: healthcareTools,
+      toolChoice: "auto",
+      experimental_context: {
+        userId: user?.id,
+        userTier,
+        sessionId,
+      },
+      providerOptions,
+      // DON'T pass abortSignal - we want the stream to continue even if user switches tabs
     });
 
     // Log streamText result object type
@@ -563,13 +549,43 @@ export async function POST(req: Request) {
 
     // Create the streaming response with chat persistence
     const streamResponse = result.toUIMessageStreamResponse({
-      sendReasoning: true,
+      sendReasoning: true, // Disable intermediate reasoning for cleaner UI
       originalMessages: messages,
-      onFinish: async ({ messages: allMessages }) => {
+      onFinish: async ({ messages: allMessages, response }) => {
         // Calculate processing time
         const processingEndTime = Date.now();
         const processingTimeMs = processingEndTime - processingStartTime;
         console.log('[Chat API] Processing completed in', processingTimeMs, 'ms');
+
+        // Log cache metadata if available (Anthropic only)
+        if (provider === 'anthropic') {
+          try {
+            const metadata = await response;
+            const anthropicMetadata = metadata?.providerMetadata?.anthropic;
+
+            if (anthropicMetadata) {
+              const cacheCreationTokens = anthropicMetadata.cacheCreationInputTokens || 0;
+              const cacheReadTokens = anthropicMetadata.cacheReadInputTokens || 0;
+              const regularInputTokens = anthropicMetadata.inputTokens || 0;
+
+              console.log('[Chat API] Anthropic cache stats:', {
+                cacheCreationInputTokens: cacheCreationTokens,
+                cacheReadInputTokens: cacheReadTokens,
+                inputTokens: regularInputTokens,
+              });
+
+              if (cacheReadTokens > 0) {
+                const totalCachedContent = cacheReadTokens + regularInputTokens;
+                const savingsPercent = ((cacheReadTokens / totalCachedContent) * 100).toFixed(1);
+                console.log(`[Chat API] 🎯 Cache hit! Saved ~${savingsPercent}% of input tokens`);
+              } else if (cacheCreationTokens > 0) {
+                console.log(`[Chat API] 📝 Cache created for ${cacheCreationTokens} tokens`);
+              }
+            }
+          } catch (error) {
+            console.error('[Chat API] Error reading cache metadata:', error);
+          }
+        }
 
         // Save all messages to database
         console.log('[Chat API] onFinish called - user:', !!user, 'sessionId:', sessionId);
