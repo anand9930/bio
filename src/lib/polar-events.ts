@@ -81,62 +81,6 @@ export class PolarEventTracker {
   }
 
   /**
-   * Track Daytona code execution usage
-   * Uses execution time in milliseconds, converted to billable units
-   */
-  async trackDaytonaUsage(
-    userId: string,
-    sessionId: string,
-    executionTimeMs: number,
-    metadata: any = {}
-  ) {
-    // Skip in development
-    if (this.isDevelopment || !this.polar) {
-      return;
-    }
-
-    // Input validation
-    if (!userId || !sessionId) {
-      return;
-    }
-
-    if (executionTimeMs < 0) {
-      return;
-    }
-
-    try {
-      // Calculate cost: $0.001 per second base cost
-      const executionSeconds = Math.max(executionTimeMs / 1000, 0.1); // Minimum 0.1 seconds
-      const baseCostDollars = executionSeconds * 0.001;
-      
-      // Apply 20% markup and multiply by 100 for $0.01 unit pricing
-      const markupMultiplier = 1.2;
-      const billableAmount = Math.ceil(baseCostDollars * markupMultiplier * 100);
-
-      
-      // Send event to Polar
-      await this.polar.events.ingest({
-        events: [{
-          name: 'daytona_execution',
-          externalCustomerId: userId,
-          metadata: {
-            billable_amount: billableAmount, // This will be summed in Polar meter
-            execution_time_ms: executionTimeMs,
-            execution_time_seconds: executionSeconds,
-            session_id: sessionId,
-            base_cost_dollars: baseCostDollars,
-            markup_multiplier: markupMultiplier,
-            timestamp: new Date().toISOString(),
-            ...metadata
-          }
-        }]
-      });
-
-    } catch (error) {
-    }
-  }
-
-  /**
    * Track dark mode theme switching usage
    * $0.01 per toggle for pay-per-use plan
    */

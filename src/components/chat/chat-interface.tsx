@@ -50,6 +50,7 @@ import { extractSearchResults } from "@/components/chat/utils/extract-search-res
 import { MemoizedTextPartWithCitations } from "@/components/chat/markdown/text-with-citations";
 import { MemoizedChartResult } from "@/components/chat/tool-renderers/chart-result";
 import { MemoizedCodeExecutionResult } from "@/components/chat/tool-renderers/code-execution-result";
+import { MemoizedNotebookExecutionResult } from "@/components/chat/tool-renderers/notebook-execution-result";
 import { MemoizedProteinViewerResult } from "@/components/chat/tool-renderers/protein-viewer-result";
 import { TimelineStep } from "@/components/chat/components/timeline-step";
 import { LiveReasoningPreview } from "@/components/chat/components/live-reasoning-preview";
@@ -780,6 +781,80 @@ export function ChatInterface({
                 <MemoizedCodeExecutionResult
                   code={part.input?.code || ""}
                   output={part.output}
+                  actionId={callId}
+                  expandedTools={expandedTools}
+                  toggleToolExpansion={toggleToolExpansion}
+                />
+              )}
+            </TimelineStep>
+          </div>
+        );
+      }
+
+      case "tool-notebookExecution": {
+        const callId = part.toolCallId;
+        const isStreaming = part.state === "input-streaming" || part.state === "input-available";
+        const hasOutput = part.state === "output-available";
+        const hasError = part.state === "output-error";
+
+        if (hasError) {
+          return (
+            <div key={callId}>
+              <TimelineStep
+                part={part}
+                messageId={message.id}
+                index={index}
+                status="error"
+                type="tool"
+                title="Notebook Execution Error"
+                subtitle={part.errorText}
+                icon={<AlertCircle />}
+                expandedTools={expandedTools}
+                toggleToolExpansion={toggleToolExpansion}
+              />
+            </div>
+          );
+        }
+
+        const description = part.input?.description || "Executed persistent notebook code";
+
+        // Parse images from markdown result (they're embedded as base64 in the tool output)
+        const result = part.output || '';
+        const imageMatches = result.matchAll(/!\[.*?\]\(data:image\/(png|jpeg);base64,(.*?)\)/g);
+        const images: Array<{ format: 'png' | 'jpeg', base64: string }> = [];
+
+        if (imageMatches) {
+          for (const match of imageMatches) {
+            images.push({
+              format: match[1] as 'png' | 'jpeg',
+              base64: match[2]
+            });
+          }
+        }
+
+        // Remove image markdown from output text
+        const cleanOutput = result.replace(/!\[.*?\]\(data:image\/.*?;base64,.*?\)/g, '').trim();
+
+        return (
+          <div key={callId}>
+            <TimelineStep
+              part={part}
+              messageId={message.id}
+              index={index}
+              status={isStreaming ? "streaming" : "complete"}
+              type="tool"
+              title="Notebook Execution"
+              subtitle={description}
+              icon={<Code2 className="h-5 w-5 text-purple-500" />}
+              expandedTools={expandedTools}
+              toggleToolExpansion={toggleToolExpansion}
+            >
+              {hasOutput && (
+                <MemoizedNotebookExecutionResult
+                  code={part.input?.code || ""}
+                  output={cleanOutput}
+                  images={images}
+                  sessionInfo="Persistent Session"
                   actionId={callId}
                   expandedTools={expandedTools}
                   toggleToolExpansion={toggleToolExpansion}

@@ -3,7 +3,6 @@ import { tool } from "ai";
 import { Valyu } from "valyu-js";
 import { track } from "@vercel/analytics/server";
 import { PolarEventTracker } from '@/lib/polar-events';
-import { Daytona } from '@daytonaio/sdk';
 import { createClient } from '@/utils/supabase/server';
 import * as db from '@/lib/db';
 import { randomUUID } from 'crypto';
@@ -398,23 +397,43 @@ export const healthcareTools = {
     },
   }),
 
-  codeExecution: tool({
-    description: `Execute Python code securely in a Daytona Sandbox for biomedical data analysis, statistical calculations, and pharmacokinetic modeling.
+  notebookExecution: tool({
+    description: `Execute Python code in a PERSISTENT Jupyter notebook environment with matplotlib/seaborn visualization support.
 
-    CRITICAL: Always include print() statements to show results. Maximum 10,000 characters.
+    CRITICAL: USE THIS TOOL WHEN:
+    - Creating matplotlib, seaborn, or plotly visualizations
+    - Multi-step analyses where variables need to persist between calls
+    - Iterative data exploration (load data → analyze → visualize)
+    - Complex pharmacokinetic models with intermediate calculations
+    - User references previous calculations ("use that dataframe", "analyze the data we loaded")
 
-    Example for biomedical calculations:
-    # Calculate drug half-life
-    import math
-    initial_concentration = 100  # mg/L
-    final_concentration = 50     # mg/L
-    time_elapsed = 4             # hours
-    half_life = time_elapsed * (math.log(2) / math.log(initial_concentration / final_concentration))
-    print(f"Calculated half-life: {half_life:.2f} hours")`,
+    USE codeExecution INSTEAD WHEN:
+    - Simple one-off calculations (half-life, dose conversions)
+    - Quick statistical tests without visualizations
+    - Independent computations without context
+
+    VISUALIZATION INSTRUCTIONS:
+    - Use plt.figure(figsize=(10, 6)) before plotting
+    - End with plt.show() to capture visualization
+    - Images automatically embedded as base64 in response
+    - Use print() for numerical results alongside plots
+
+    SESSION PERSISTENCE:
+    - Variables, imports, and data persist across executions in same chat session
+    - Sessions expire after 30 minutes of inactivity
+    - Example: Define df in Call 1 → use df in Call 2 → visualize df in Call 3
+
+    AVAILABLE LIBRARIES:
+    - NumPy, pandas, matplotlib, seaborn, plotly, scikit-learn, scipy
+    - All standard scientific Python libraries
+
+    Maximum code length: 10,000 characters.`,
+
     inputSchema: z.object({
-      code: z.string().describe('Python code to execute - MUST include print() statements'),
-      description: z.string().optional().describe('Brief description of the calculation'),
+      code: z.string().describe('Python code to execute - MUST include print() statements for text output'),
+      description: z.string().optional().describe('Brief description of what this code does'),
     }),
+
     execute: async ({ code, description }, options) => {
       const userId = (options as any)?.experimental_context?.userId;
       const sessionId = (options as any)?.experimental_context?.sessionId;
@@ -424,76 +443,75 @@ export const healthcareTools = {
       const startTime = Date.now();
 
       try {
+        // Validation
         if (code.length > 10000) {
           return '🚫 **Error**: Code too long. Please limit your code to 10,000 characters.';
         }
 
-        const daytonaApiKey = process.env.DAYTONA_API_KEY;
-        if (!daytonaApiKey) {
-          return '❌ **Configuration Error**: Daytona API key is not configured.';
+        const e2bApiKey = process.env.E2B_API_KEY;
+        if (!e2bApiKey) {
+          return '❌ **Configuration Error**: E2B API key is not configured. Please contact support.';
         }
 
-        const daytona = new Daytona({
-          apiKey: daytonaApiKey,
-          serverUrl: process.env.DAYTONA_API_URL,
-          target: (process.env.DAYTONA_TARGET as any) || undefined,
+        // Execute via E2B Session Manager
+        const { E2BSessionManager } = await import('@/lib/e2b/session-manager');
+        const manager = E2BSessionManager.getInstance();
+        const result = await manager.executeCode(sessionId, code);
+
+        const executionTime = Date.now() - startTime;
+
+        // Track analytics
+        await track('Notebook Code Executed', {
+          success: !result.error,
+          codeLength: code.length,
+          executionTime: executionTime,
+          hasDescription: !!description,
+          hasVisualizations: result.images.length > 0,
+          imageCount: result.images.length,
         });
 
-        let sandbox: any | null = null;
-        try {
-          sandbox = await daytona.create({ language: 'python' });
-          const execution = await sandbox.process.codeRun(code);
-          const executionTime = Date.now() - startTime;
+        // TODO: Add E2B usage tracking for pay-per-use users if needed
 
-          await track('Python Code Executed', {
-            success: execution.exitCode === 0,
-            codeLength: code.length,
-            executionTime: executionTime,
-            hasDescription: !!description,
-          });
-
-          if (userId && sessionId && userTier === 'pay_per_use' && execution.exitCode === 0 && !isDevelopment) {
-            try {
-              const polarTracker = new PolarEventTracker();
-              await polarTracker.trackDaytonaUsage(userId, sessionId, executionTime, {
-                codeLength: code.length,
-                success: true,
-                description: description || 'Code execution'
-              });
-            } catch (error) {
-              console.error('[CodeExecution] Failed to track usage:', error);
-            }
-          }
-
-          if (execution.exitCode !== 0) {
-            return `❌ **Execution Error**: ${execution.result || 'Unknown error'}`;
-          }
-
-          return `🐍 **Python Code Execution**
-${description ? `**Description**: ${description}\n` : ''}
-
-\`\`\`python
-${code}
-\`\`\`
-
-**Output:**
-\`\`\`
-${execution.result || '(No output produced)'}
-\`\`\`
-
-⏱️ **Execution Time**: ${executionTime}ms`;
-
-        } finally {
-          try {
-            if (sandbox) {
-              await sandbox.delete();
-            }
-          } catch (cleanupError) {
-            console.error('[CodeExecution] Cleanup error:', cleanupError);
-          }
+        // Build response
+        let response = `🔬 **Notebook Execution** (Persistent Session)\n`;
+        if (description) {
+          response += `**Description**: ${description}\n\n`;
         }
+
+        response += `\`\`\`python\n${code}\n\`\`\`\n\n`;
+
+        // Handle errors
+        if (result.error) {
+          response += `❌ **Error**:\n\`\`\`\n${result.error}\n\`\`\`\n\n`;
+          response += `💡 **Tip**: Variables from previous executions may have expired. Try reloading your data.`;
+          return response;
+        }
+
+        // Add stdout output
+        if (result.stdout) {
+          response += `**Output:**\n\`\`\`\n${result.stdout}\n\`\`\`\n\n`;
+        }
+
+        // Add visualizations
+        if (result.images.length > 0) {
+          response += `**Visualizations:**\n`;
+          result.images.forEach((img, idx) => {
+            response += `![Visualization ${idx + 1}](data:image/${img.format};base64,${img.base64})\n`;
+          });
+          response += `\n`;
+        }
+
+        // Add execution metadata
+        response += `⏱️ **Execution Time**: ${executionTime}ms\n`;
+        response += `📊 **Session**: Variables persist across executions in this chat`;
+
+        return response;
+
       } catch (error: any) {
-        return `❌ **Error**: ${error.message || 'Unknown error occurred'}`;
+        const executionTime = Date.now() - startTime;
+        console.error('[NotebookExecution] Error:', error);
+
+        return `❌ **Error**: ${error.message || 'Unknown error occurred'}\n\n⏱️ **Execution Time**: ${executionTime}ms`;
       }
     },
   }),
@@ -856,7 +874,7 @@ ${execution.result || '(No output produced)'}
           pdbId: pdbId,
           wasDirectPdbId: isPdbId,
           searchResultCount: totalMatches || 1,
-          searchScore: searchScore,
+          searchScore: searchScore || 1.0,
         });
 
         return {

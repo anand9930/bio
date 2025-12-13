@@ -6,7 +6,7 @@
 import { createClient as createSupabaseClient } from "@/utils/supabase/server";
 import { getLocalDb, DEV_USER_ID } from "./local-db/client";
 import { getDevUser, isDevelopmentMode } from "./local-db/local-auth";
-import { eq, desc, and } from "drizzle-orm";
+import { eq, desc, and, sql } from "drizzle-orm";
 import * as schema from "./local-db/schema";
 
 // ============================================================================
@@ -488,5 +488,117 @@ export async function createProteinStructure(structure: {
 
   const supabase = await createSupabaseClient();
   const { error } = await supabase.from("protein_structures").insert(structure);
+  return { error };
+}
+
+// ==============================================================================
+// E2B SESSION OPERATIONS
+// ==============================================================================
+
+/**
+ * Create a new E2B session record
+ */
+export async function createE2BSession(sessionData: {
+  id: string; // E2B sandbox ID
+  chat_session_id: string;
+  user_id?: string;
+}) {
+  if (isDevelopmentMode()) {
+    const db = getLocalDb();
+    await db.insert(schema.e2bSessions).values({
+      id: sessionData.id,
+      chatSessionId: sessionData.chat_session_id,
+      userId: sessionData.user_id || null,
+      createdAt: new Date(),
+      lastUsedAt: new Date(),
+      executionCount: 1,
+      status: "active",
+    });
+    return { error: null };
+  }
+
+  const supabase = await createSupabaseClient();
+  const { error } = await supabase.from("e2b_sessions").insert({
+    id: sessionData.id,
+    chat_session_id: sessionData.chat_session_id,
+    user_id: sessionData.user_id || null,
+    created_at: new Date().toISOString(),
+    last_used_at: new Date().toISOString(),
+    execution_count: 1,
+    status: "active",
+  });
+  return { error };
+}
+
+/**
+ * Update E2B session usage statistics
+ */
+export async function updateE2BSessionUsage(sessionId: string) {
+  if (isDevelopmentMode()) {
+    const db = getLocalDb();
+    await db
+      .update(schema.e2bSessions)
+      .set({
+        lastUsedAt: new Date(),
+        executionCount: sql`${schema.e2bSessions.executionCount} + 1`,
+      })
+      .where(eq(schema.e2bSessions.id, sessionId));
+    return { error: null };
+  }
+
+  const supabase = await createSupabaseClient();
+  const { error } = await supabase
+    .from("e2b_sessions")
+    .update({
+      last_used_at: new Date().toISOString(),
+      execution_count: sql`execution_count + 1`,
+    })
+    .eq("id", sessionId);
+  return { error };
+}
+
+/**
+ * Get active E2B session for a chat session
+ */
+export async function getActiveE2BSession(chatSessionId: string) {
+  if (isDevelopmentMode()) {
+    const db = getLocalDb();
+    const session = await db.query.e2bSessions.findFirst({
+      where: and(
+        eq(schema.e2bSessions.chatSessionId, chatSessionId),
+        eq(schema.e2bSessions.status, "active")
+      ),
+    });
+    return { data: session || null, error: null };
+  }
+
+  const supabase = await createSupabaseClient();
+  const { data, error } = await supabase
+    .from("e2b_sessions")
+    .select("*")
+    .eq("chat_session_id", chatSessionId)
+    .eq("status", "active")
+    .single();
+  return { data, error };
+}
+
+/**
+ * Mark E2B session as terminated
+ */
+export async function terminateE2BSession(sessionId: string) {
+  if (isDevelopmentMode()) {
+    const db = getLocalDb();
+    await db
+      .update(schema.e2bSessions)
+      .set({ status: "terminated" })
+      .where(eq(schema.e2bSessions.id, sessionId));
+    return { error: null };
+  }
+
+  const supabase = await createSupabaseClient();
+  const { error } = await supabase
+    .from("e2b_sessions")
+    .update({ status: "terminated" })
+    .eq("id", sessionId);
   return { error };
 }

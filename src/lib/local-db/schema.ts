@@ -107,6 +107,23 @@ export const proteinStructures = sqliteTable("protein_structures", {
     .default(sql`(unixepoch())`),
 });
 
+// E2B Sessions table - tracks persistent Jupyter notebook sandboxes
+export const e2bSessions = sqliteTable("e2b_sessions", {
+  id: text("id").primaryKey(), // E2B sandbox ID
+  chatSessionId: text("chat_session_id")
+    .notNull()
+    .references(() => chatSessions.id, { onDelete: "cascade" }),
+  userId: text("user_id").references(() => users.id, { onDelete: "cascade" }),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+  lastUsedAt: integer("last_used_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+  executionCount: integer("execution_count").notNull().default(0),
+  status: text("status").notNull().default("active"), // active, expired, terminated
+});
+
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 export type ChatSession = typeof chatSessions.$inferSelect;
@@ -119,3 +136,5 @@ export type CSV = typeof csvs.$inferSelect;
 export type InsertCSV = typeof csvs.$inferInsert;
 export type ProteinStructure = typeof proteinStructures.$inferSelect;
 export type InsertProteinStructure = typeof proteinStructures.$inferInsert;
+export type E2BSession = typeof e2bSessions.$inferSelect;
+export type InsertE2BSession = typeof e2bSessions.$inferInsert;

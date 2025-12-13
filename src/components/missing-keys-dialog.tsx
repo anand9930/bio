@@ -14,7 +14,6 @@ export function MissingKeysDialog() {
   const [open, setOpen] = useState(false);
   const [status, setStatus] = useState<{
     valyuKeyPresent: boolean;
-    daytonaKeyPresent: boolean;
     openaiKeyPresent: boolean;
     aiGatewayKeyPresent: boolean;
   } | null>(null);
@@ -33,7 +32,6 @@ export function MissingKeysDialog() {
 
           const missing =
             !envData.valyuKeyPresent ||
-            !envData.daytonaKeyPresent ||
             (!envData.openaiKeyPresent && !envData.aiGatewayKeyPresent);
 
           // Only show dialog if API keys are missing
@@ -51,11 +49,10 @@ export function MissingKeysDialog() {
   if (!status) return null;
 
   const missingValyu = !status.valyuKeyPresent;
-  const missingDaytona = !status.daytonaKeyPresent;
   const missingOpenAI = !status.openaiKeyPresent && !status.aiGatewayKeyPresent;
 
   // Don't show if no API key issues
-  if (!missingValyu && !missingDaytona && !missingOpenAI) return null;
+  if (!missingValyu && !missingOpenAI) return null;
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -73,14 +70,6 @@ export function MissingKeysDialog() {
               <div className="text-muted-foreground">
                 Add VALYU_API_KEY to your environment to enable biomedical data and
                 web search.
-              </div>
-            </div>
-          )}
-          {missingDaytona && (
-            <div className="rounded-md border p-3">
-              <div className="font-medium">Missing DAYTONA_API_KEY</div>
-              <div className="text-muted-foreground">
-                Add DAYTONA_API_KEY to run Python code in the secure sandbox.
               </div>
             </div>
           )}
