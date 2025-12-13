@@ -3,7 +3,7 @@ import { Sandbox, Result, ExecutionError } from '@e2b/code-interpreter';
 /**
  * E2B Session Manager
  *
- * Manages persistent E2B Code Interpreter sandboxes for stateful Python execution.
+ * Manages persistent E2B Code Interpreter sandboxes for stateful R execution.
  * Implements session caching and reuse to reduce costs by 67% per execution.
  */
 
@@ -34,7 +34,7 @@ export class E2BSessionManager {
   private constructor() {
     // E2B SDK reads API key from E2B_API_KEY environment variable
     this.apiKey = process.env.E2B_API_KEY || '';
-    this.timeout = parseInt(process.env.E2B_TIMEOUT || '120000', 10);
+    this.timeout = parseInt(process.env.E2B_TIMEOUT || '1120000', 10);
 
     if (!this.apiKey) {
       console.warn('[E2BSessionManager] E2B_API_KEY not configured. Notebook execution will fail.');
@@ -117,7 +117,7 @@ export class E2BSessionManager {
   }
 
   /**
-   * Execute Python code in a persistent sandbox
+   * Execute R code in a persistent sandbox
    */
   public async executeCode(chatSessionId: string, code: string): Promise<ExecutionResult> {
     const startTime = Date.now();
@@ -128,6 +128,7 @@ export class E2BSessionManager {
       console.log(`[E2BSessionManager] Executing code in sandbox ${sandbox.sandboxId}`);
 
       const execution = await sandbox.runCode(code, {
+        language: 'r',  // Execute code in R language
         onStderr: (stderr) => console.log('[E2B stderr]', stderr),
         onStdout: (stdout) => console.log('[E2B stdout]', stdout),
       });
@@ -137,7 +138,7 @@ export class E2BSessionManager {
       // Extract stdout
       const stdout = execution.logs.stdout.join('\n') + execution.logs.stderr.join('\n');
 
-      // Extract images (matplotlib/seaborn plots)
+      // Extract images (ggplot2/base R plots)
       const images: Array<{ format: 'png' | 'jpeg', base64: string }> = [];
 
       for (const result of execution.results) {

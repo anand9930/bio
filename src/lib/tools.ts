@@ -398,39 +398,36 @@ export const healthcareTools = {
   }),
 
   notebookExecution: tool({
-    description: `Execute Python code in a PERSISTENT Jupyter notebook environment with matplotlib/seaborn visualization support.
+    description: `Execute R code in a PERSISTENT Jupyter notebook environment with ggplot2/plotly visualization support.
 
     CRITICAL: USE THIS TOOL WHEN:
-    - Creating matplotlib, seaborn, or plotly visualizations
+    - Creating ggplot2, plotly, or base R visualizations
     - Multi-step analyses where variables need to persist between calls
     - Iterative data exploration (load data → analyze → visualize)
     - Complex pharmacokinetic models with intermediate calculations
     - User references previous calculations ("use that dataframe", "analyze the data we loaded")
-
-    USE codeExecution INSTEAD WHEN:
-    - Simple one-off calculations (half-life, dose conversions)
-    - Quick statistical tests without visualizations
-    - Independent computations without context
+    - Any R statistical analysis or data manipulation
 
     VISUALIZATION INSTRUCTIONS:
-    - Use plt.figure(figsize=(10, 6)) before plotting
-    - End with plt.show() to capture visualization
+    - Use ggplot2 for publication-quality graphics
+    - Base R plots (plot(), hist(), boxplot()) also work
     - Images automatically embedded as base64 in response
     - Use print() for numerical results alongside plots
+    - Example: ggplot(df, aes(x=x, y=y)) + geom_line()
 
     SESSION PERSISTENCE:
-    - Variables, imports, and data persist across executions in same chat session
+    - Variables, libraries, and data persist across executions in same chat session
     - Sessions expire after 30 minutes of inactivity
     - Example: Define df in Call 1 → use df in Call 2 → visualize df in Call 3
 
     AVAILABLE LIBRARIES:
-    - NumPy, pandas, matplotlib, seaborn, plotly, scikit-learn, scipy
-    - All standard scientific Python libraries
+    - ggplot2, dplyr, data.table, tidyr, plotly, caret, lubridate
+    - All standard R packages for data analysis and visualization
 
     Maximum code length: 10,000 characters.`,
 
     inputSchema: z.object({
-      code: z.string().describe('Python code to execute - MUST include print() statements for text output'),
+      code: z.string().describe('R code to execute - MUST include print() statements for text output'),
       description: z.string().optional().describe('Brief description of what this code does'),
     }),
 
@@ -478,7 +475,7 @@ export const healthcareTools = {
           response += `**Description**: ${description}\n\n`;
         }
 
-        response += `\`\`\`python\n${code}\n\`\`\`\n\n`;
+        response += `\`\`\`r\n${code}\n\`\`\`\n\n`;
 
         // Handle errors
         if (result.error) {

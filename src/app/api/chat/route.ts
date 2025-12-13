@@ -299,8 +299,8 @@ export async function POST(req: Request) {
       
       You can:
 
-         - Execute Python code for pharmacokinetic modeling, statistical analysis, data visualization, and complex calculations using the notebookExecution tool (runs in a secure E2B Jupyter environment)
-         - The Python environment includes all scientific libraries (numpy, pandas, scipy, scikit-learn, biopython, matplotlib, seaborn, plotly)
+         - Execute R code for pharmacokinetic modeling, statistical analysis, data visualization, and complex calculations using the notebookExecution tool (runs in a secure E2B Jupyter environment)
+         - The R environment includes all data science packages (ggplot2, dplyr, data.table, tidyr, plotly, caret, lubridate)
          - Variables and data persist across executions within the same chat session, enabling iterative analysis workflows
          - Search for clinical trials data using the clinical trials search tool (ClinicalTrials.gov data, trial phases, endpoints, patient populations)
          - Search FDA drug labels using the drug information search tool (DailyMed data, contraindications, dosing, interactions, warnings)
@@ -410,38 +410,38 @@ export async function POST(req: Request) {
 
          CRITICAL: CODE EXECUTION
 
-         For ALL Python code execution, use the notebookExecution tool.
+         For ALL R code execution, use the notebookExecution tool.
 
          This tool provides:
          - Persistent Jupyter notebook environment (variables survive across executions in the same chat session)
-         - Full scientific Python stack: numpy, pandas, scipy, scikit-learn, biopython
-         - Visualization libraries: matplotlib, seaborn, plotly with automatic image embedding
+         - Full R statistical stack: ggplot2, dplyr, data.table, tidyr, caret
+         - Visualization libraries: ggplot2, plotly with automatic image embedding
          - Iterative analysis workflows: load data once, analyze in multiple steps
 
          ALWAYS use notebookExecution when users ask to:
-         - Calculate, compute, or run any Python code
+         - Calculate, compute, or run any R code
          - Create visualizations, plots, charts, graphs, or heatmaps
          - Perform data analysis, statistical tests, or pharmacokinetic modeling
          - Work with DataFrames, datasets, or multi-step analyses
          - Reference previous calculations or variables
 
-         CRITICAL PYTHON CODE REQUIREMENTS:
-         1. ALWAYS include print() statements - Python code without print() produces no visible output
+         CRITICAL R CODE REQUIREMENTS:
+         1. ALWAYS include print() statements - R code without print() produces no visible output
          2. Use descriptive labels and proper formatting in your print statements
          3. Include units, currency symbols, percentages where appropriate
          4. Show step-by-step calculations for complex problems
          5. Use f-string formatting for professional output
          6. Always calculate intermediate values before printing final results
-          7. Available libraries: numpy, pandas, scikit-learn, scipy, biopython, matplotlib, seaborn, plotly.
+          7. Available libraries: ggplot2, dplyr, data.table, tidyr, plotly, caret, lubridate.
           8. Visualization guidance:
-             - Use notebookExecution for all Python code execution and scientific plots (matplotlib/seaborn/plotly): heatmaps, scatter plots with regression, violin plots, publication-quality figures
-             - Use createChart tool for simple business charts without Python: line charts, bar charts, basic visualizations
+             - Use notebookExecution for all R code execution and scientific plots (ggplot2/plotly): heatmaps, scatter plots with regression, violin plots, publication-quality figures
+             - Use createChart tool for simple business charts without R: line charts, bar charts, basic visualizations
          
-          REQUIRED: Every Python script must end with print() statements that show the calculated results with proper labels, units, and formatting. Never just write variable names or expressions without print() - they will not display anything to the user.
+          REQUIRED: Every R script must end with print() statements that show the calculated results with proper labels, units, and formatting. Never just write variable names or expressions without print() - they will not display anything to the user.
 
           VISUALIZATION REQUIREMENTS FOR notebookExecution:
-          - Always use plt.figure(figsize=(10, 6)) before creating matplotlib plots
-          - End with plt.show() to capture the visualization
+          - Use ggplot2 for publication-quality graphics: ggplot(df, aes(x=x, y=y)) + geom_line()
+          - Base R plots also work: plot(), hist(), boxplot()
           - Images are automatically embedded as base64 in your response
           - Use print() for numerical results alongside plots
          
